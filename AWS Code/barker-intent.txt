@@ -1,0 +1,3 @@
+{"intents":
+  [{"intent": "barker","slots":[{"name": "ttstext", "type": "LIST_OF_WORDS"}]}
+]}  
