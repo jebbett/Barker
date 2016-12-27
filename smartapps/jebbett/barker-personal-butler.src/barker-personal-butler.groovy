@@ -234,13 +234,17 @@ def messengerPostHandler(){
     	responseTxt = actionCommand(fbJSON.entry.messaging.message.text[0][0]) as String
     }
     
+    fbSendMessage(fbJSON.entry.messaging.sender.id[0][0], responseTxt)
+}
+
+def fbSendMessage(userid, message){
+	// Send a message to FB
     def params = [
         uri: "https://graph.facebook.com/v2.6/me/messages?access_token=$fbAccessToken",
-        body: [recipient: [id: fbJSON.entry.messaging.sender.id[0][0]], message: [text: responseTxt] ]
+        body: [recipient: [id: userid], message: [text: message] ]
     ]
-
     try { httpPostJson(params) { resp ->
-    	resp.headers.each { log.debug "${it.name} : ${it.value}" }
-        log.debug "response contentType: ${resp.contentType}"
-    } } catch (e) { log.debug "something went wrong: $e" }
+    	resp.headers.each { if (debug) log.debug "${it.name} : ${it.value}" }
+        if (debug) log.debug "response contentType: ${resp.contentType}"
+    } } catch (e) { if (debug) log.debug "something went wrong: $e" }
 }
