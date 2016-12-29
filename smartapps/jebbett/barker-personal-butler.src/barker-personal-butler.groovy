@@ -54,7 +54,8 @@ private mainPage() {
             input "fbVerifyToken", "password", title: "Verify Token", description:"", required: false
             input "fbAccessToken", "password", title: "FB Page Access Token", description:"", required: false
             input "fbAdminUser", "text", title: "Admin ID (Must Be A Single ID)", description:"", required: false
-            paragraph "Verify Token: Used to setup link to FB bot (You make up this value)\nAccess Token: To allow ST to send messages via FB Messenger (From developers.facebook.com)\nAllowed Users: These are the Facebook user IDs, seperated by commas (You can get this in the debug logging)"
+            paragraph "Verify Token: Used to setup link to FB bot (You make up this value)\n" +
+            	"Access Token: To allow ST to send messages via FB Messenger (From developers.facebook.com)"
         }
         section(title: "Debugging") {
         	href name: "logPage", title:"Last 20 Commands", description: "", page: "logPage"
