@@ -17,7 +17,7 @@
  * 
  * VERSION CONTROL
  *
- *	V0.0.1	2016-12-10	Alpha
+ *	V0.1	2016-12-29	Initial Beta
  *
  *	
  */
@@ -51,9 +51,9 @@ private mainPage() {
 			input "echoRespond", "bool", title: "Should Alexa Ask If There Is Anything Else?", defaultValue: false, required: false
         }
         section ("Facebook Messenger Settings") { 
-            input "verifyToken", "password", title: "Verify Token", description:"", required: false
+            input "fbVerifyToken", "password", title: "Verify Token", description:"", required: false
             input "fbAccessToken", "password", title: "FB Page Access Token", description:"", required: false
-            input "fbAllowedUsers", "text", title: "Allowed User IDs", description:"", required: false
+            input "fbAdminUser", "text", title: "Admin ID (Must Be A Single ID)", description:"", required: false
             paragraph "Verify Token: Used to setup link to FB bot (You make up this value)\nAccess Token: To allow ST to send messages via FB Messenger (From developers.facebook.com)\nAllowed Users: These are the Facebook user IDs, seperated by commas (You can get this in the debug logging)"
         }
         section(title: "Debugging") {
@@ -216,7 +216,7 @@ def echoHandler(){
 /*****************************************************************/
 
 def messengerGetHandler(){
-    if (params.hub.mode == 'subscribe' && params.hub.verify_token == settings.verifyToken) {
+    if (params.hub.mode == 'subscribe' && params.hub.verify_token == settings.fbVerifyToken) {
         log.debug "Validating webhook"
         render contentType: "text/html", data: params.hub.challenge, status: 200
     } else {
@@ -226,25 +226,53 @@ def messengerGetHandler(){
 }
 
 def messengerPostHandler(){
+    if(!state.allowedUsers) state.allowedUsers = []
+    //state.allowedUsers = []
     def fbJSON = request.JSON
-    def responseTxt = "Sorry I don't know you."
-    logWriter("FB MESSENGER POST EVENT - MESSAGE:  ${fbJSON.entry.messaging.message.text[0][0]}")
-    logWriter("FB MESSENGER POST EVENT - SENDER_ID:  ${fbJSON.entry.messaging.sender.id[0][0]}")
-	if(fbAllowedUsers != null && fbAllowedUsers.indexOf("${fbJSON.entry.messaging.sender.id[0][0]}") >= 0){ 
-    	responseTxt = actionCommand(fbJSON.entry.messaging.message.text[0][0]) as String
-    }
+    def responseTxt = ""
+    def senderID = fbJSON.entry.messaging.sender.id[0][0]
+    def fbMessage = fbJSON.entry.messaging.message.text[0][0]
     
-    fbSendMessage(fbJSON.entry.messaging.sender.id[0][0], responseTxt)
+	if(state.allowedUsers.contains(senderID)|| settings?.fbAdminUser == senderID){
+    	responseTxt = actionCommand(fbJSON.entry.messaging.message.text[0][0]) as String
+        if(settings?.fbAdminUser == senderID && fbMessage.startsWith("Add ")){
+			fbMessage = fbMessage.substring(4)
+            def addUserName = fbGetUser(fbMessage)
+            if(addUserName != "Unknown" && !state.allowedUsers.contains(fbMessage)){
+        		responseTxt = "Added $addUserName to be able to send messages to Barker, make sure they are added as a test user otherwise Barker won't be able to talk back" as String
+                state.allowedUsers.add(fbMessage)
+                fbSendMessage(fbMessage, "You can now send messages to ${butlerName}", null)
+            }
+        }
+    }else{
+    	responseTxt = "Sorry I don't know you."
+        //send message to admin
+        def intMsg = "${fbGetUser(senderID)} has sent a message, if you want to allow access then reply - Add ${senderID}" as String
+        fbSendMessage(fbAdminUser, intMsg, "Add ${senderID}")
+    }
+    fbSendMessage(senderID, responseTxt, null)
 }
 
-def fbSendMessage(userid, message){
-	// Send a message to FB
-    def params = [
-        uri: "https://graph.facebook.com/v2.6/me/messages?access_token=$fbAccessToken",
-        body: [recipient: [id: userid], message: [text: message] ]
-    ]
-    try { httpPostJson(params) { resp ->
-    	resp.headers.each { if (debug) log.debug "${it.name} : ${it.value}" }
-        if (debug) log.debug "response contentType: ${resp.contentType}"
-    } } catch (e) { if (debug) log.debug "something went wrong: $e" }
+def fbSendMessage(userid, String message, String buttontxt){
+	def params = []
+    if(buttontxt == null){
+        params = [
+            uri: "https://graph.facebook.com/v2.6/me/messages?access_token=$fbAccessToken",
+            body: [recipient: [id: userid], message: [text: message]]
+        ]
+    }else{
+        params = [
+            uri: "https://graph.facebook.com/v2.6/me/messages?access_token=$fbAccessToken",
+            body: [recipient: [id: userid], "message": [text: message, quick_replies:[
+                [content_type:"text", title: buttontxt, payload:"none", image_url:""]
+            ]]]
+        ]
+    }
+    try { httpPostJson(params) } catch (e) { log.error "something went wrong: $e" }
+}
+
+def fbGetUser(userID){
+	def params = [uri: "https://graph.facebook.com/v2.6/${userID}?access_token=${fbAccessToken}&fields=first_name,last_name"]
+    try { httpGet(params) { resp -> return "${resp.data.first_name} ${resp.data.last_name}" }
+    } catch (e) { log.error "something went wrong: $e"; return "Unknown" }
 }
