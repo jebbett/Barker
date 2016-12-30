@@ -18,6 +18,7 @@
  * VERSION CONTROL
  *
  *	V0.1	2016-12-29	Initial Beta
+ *	V0.2	2016-12-30	Added list handler
  *
  *	
  */
@@ -110,6 +111,8 @@ def initialize() {
     // publish app ID and token to debug logging
     logWriter("ECHO LAMBDA INFO:\nvar STtoken = '${state.accessToken}';\nvar url = '${getApiServerUrl()}/api/smartapps/installations/${app.id}/';")
     logWriter("URL FOR USE AT DEVELOPERS.FACEBOOK.COM:\n${getApiServerUrl()}/api/smartapps/installations/${app.id}/m?access_token=${state.accessToken}")
+    
+    state.allowedUsers = [:]
 }
 
 // Debug Logging
@@ -227,46 +230,69 @@ def messengerGetHandler(){
 }
 
 def messengerPostHandler(){
-    if(!state.allowedUsers) state.allowedUsers = []
-    //state.allowedUsers = []
+    if(!state.allowedUsers) state.allowedUsers = [:]
     def fbJSON = request.JSON
     def responseTxt = ""
     def senderID = fbJSON.entry.messaging.sender.id[0][0]
     def fbMessage = fbJSON.entry.messaging.message.text[0][0]
     
-	if(state.allowedUsers.contains(senderID)|| settings?.fbAdminUser == senderID){
+    if(fbMessage == null) return
+    
+	if(state.allowedUsers.containsKey(senderID) || settings?.fbAdminUser == senderID){
     	responseTxt = actionCommand(fbJSON.entry.messaging.message.text[0][0]) as String
+        // Add - Admin Handler
         if(settings?.fbAdminUser == senderID && fbMessage.startsWith("Add ")){
 			fbMessage = fbMessage.substring(4)
             def addUserName = fbGetUser(fbMessage)
-            if(addUserName != "Unknown" && !state.allowedUsers.contains(fbMessage)){
+            if(addUserName != "Unknown" && !state.allowedUsers.containsKey(fbMessage)){
         		responseTxt = "Added $addUserName to be able to send messages to Barker, make sure they are added as a test user otherwise Barker won't be able to talk back" as String
-                state.allowedUsers.add(fbMessage)
+                state.allowedUsers << ["${fbMessage as String}" : "${fbGetUser(fbMessage) as String}"]
                 fbSendMessage(fbMessage, "You can now send messages to ${butlerName}", null)
             }
         }
+        // List / More - (Admin & User) Return buttons for appLink commands (removed as can only handle 11 entries.
+        if((state.allowedUsers.containsKey(senderID) || settings?.fbAdminUser == senderID) && (fbMessage == "List" || fbMessage == "list" || fbMessage == "More" || fbMessage == "more")){
+        	def list =[]
+            if(fbMessage == "List" || fbMessage == "list"){
+            	appLinkHandler(value: "list").each { item -> list << (item as String).substring((item as String).lastIndexOf("]") + 2) }
+            }else{
+            	list = atomicState."userList$senderID"
+            }
+            list.sort()
+            if(list.size() >= 12){
+            	atomicState."userList$senderID" = list
+                list = list.take(10) << "More"
+                atomicState."userList$senderID" = atomicState."userList$senderID".drop(10)
+            }
+        	fbSendMessage(senderID, "Here are the list of actions", list)
+            return
+        }
     }else{
     	responseTxt = "Sorry I don't know you."
-        //send message to admin
+        // Send message to admin asking if they shoudl be added
         def intMsg = "${fbGetUser(senderID)} has sent a message, if you want to allow access then reply - Add ${senderID}" as String
-        fbSendMessage(fbAdminUser, intMsg, "Add ${senderID}")
+        fbSendMessage(fbAdminUser, intMsg, ["Add ${senderID}"])
     }
     fbSendMessage(senderID, responseTxt, null)
 }
 
-def fbSendMessage(userid, String message, String buttontxt){
-	def params = []
+def fbSendMessage(userid, String message, List buttontxt){
+	// WARNING: buttontxt can only include up to 11 entries, each entry can only be 20 characters
+    def params = []
+    def buttons = []
     if(buttontxt == null){
         params = [
             uri: "https://graph.facebook.com/v2.6/me/messages?access_token=$fbAccessToken",
             body: [recipient: [id: userid], message: [text: message]]
         ]
     }else{
+    	buttontxt.each{	text ->
+        	text = text as String
+        	buttons << [content_type:"text", title: text, payload:"none", image_url:""]
+        }
         params = [
             uri: "https://graph.facebook.com/v2.6/me/messages?access_token=$fbAccessToken",
-            body: [recipient: [id: userid], "message": [text: message, quick_replies:[
-                [content_type:"text", title: buttontxt, payload:"none", image_url:""]
-            ]]]
+            body: [recipient: [id: userid], "message": [text: message, quick_replies:buttons]]
         ]
     }
     try { httpPostJson(params) } catch (e) { log.error "something went wrong: $e" }
